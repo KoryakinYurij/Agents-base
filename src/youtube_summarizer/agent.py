@@ -4,13 +4,7 @@ import yt_dlp
 import re
 import os
 import google.generativeai as genai
-
-# Настраиваем API-ключ при загрузке модуля
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-else:
-    print("ВНИМАНИЕ: Ключ GEMINI_API_KEY не найден в переменных окружения.")
+from dotenv import load_dotenv
 
 def get_youtube_transcript(url: str) -> dict:
     """
@@ -66,6 +60,12 @@ def summarize_transcript(transcript: str) -> dict:
         Словарь с ключом 'summary' (готовое саммари в формате Markdown).
         В случае ошибки возвращает словарь с ключом 'error'.
     """
+    load_dotenv()
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return {"error": "Ключ GEMINI_API_KEY не найден. Убедитесь, что он задан в .env файле."}
+
+    genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-pro-latest')
 
     try:
