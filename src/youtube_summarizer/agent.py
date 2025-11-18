@@ -1,71 +1,70 @@
 from google.adk.agents.llm_agent import Agent
-from youtube_transcript_api import YouTubeTranscriptApi
-import yt_dlp
 import re
 import os
 import google.generativeai as genai
-from dotenv import load_dotenv
+import requests
+import xml.etree.ElementTree as ET
+from urllib.parse import urlparse, parse_qs
+
+# Настраиваем API-ключ при загрузке модуля
+api_key = os.getenv("GEMINI_API_KEY")
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    print("ВНИМАНИЕ: Ключ GEMINI_API_KEY не найден в переменных окружения.")
 
 def get_youtube_transcript(url: str) -> dict:
     """
-    Принимает URL YouTube-видео, извлекает его название и полный текст транскрипта.
-
-    Args:
-        url: Ссылка на YouTube-видео.
-
-    Returns:
-        Словарь с ключами 'title' (название видео) и 'transcript' (текст транскрипта).
-        В случае ошибки возвращает словарь с ключом 'error'.
+    Принимает URL YouTube-видео и извлекает транскрипт, делая прямые запросы.
     """
-    video_id = None
-    patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})',
-        r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([a-zA-Z0-9_-]{11})',
-        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            video_id = match.group(1)
-            break
-
-    if not video_id:
-        return {"error": "Не удалось извлечь ID видео из ссылки. Убедитесь, что ссылка корректна."}
-
     try:
-        # Используем yt-dlp для получения названия видео
-        ydl_opts = {'quiet': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            video_title = info.get('title', 'Без названия')
+        video_id = parse_qs(urlparse(url).query).get('v')[0]
+        if not video_id:
+            return {"error": "Не удалось извлечь ID видео."}
 
-        # Получаем транскрипт
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US'])
-        transcript_text = " ".join([item['text'] for item in transcript_list])
+        # Получаем информацию о видео для доступа к транскриптам
+        video_info_url = f"https://www.youtube.com/watch?v={video_id}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(video_info_url, headers=headers)
 
-        return {"title": video_title, "transcript": transcript_text}
+        if response.status_code != 200:
+            return {"error": f"Не удалось получить информацию о видео. Статус: {response.status_code}"}
+
+        # Ищем URL для транскриптов в теле HTML
+        match = re.search(r'"captionTracks":(\[.*?\])', response.text)
+        if not match:
+            return {"error": "Транскрипты для этого видео не найдены."}
+
+        caption_tracks = eval(match.group(1).replace("true", "True").replace("false", "False"))
+
+        # Находим URL для английского или русского транскрипта
+        transcript_url = None
+        for track in caption_tracks:
+            if track['languageCode'] in ('en', 'ru'):
+                transcript_url = track['baseUrl']
+                break
+
+        if not transcript_url:
+            return {"error": "Подходящий транскрипт (en/ru) не найден."}
+
+        # Загружаем и парсим XML транскрипта
+        transcript_response = requests.get(transcript_url, headers=headers)
+        root = ET.fromstring(transcript_response.content)
+
+        # Собираем текст
+        transcript_text = " ".join([elem.text for elem in root.findall('text')])
+
+        return {"title": video_id, "transcript": transcript_text.replace("\n", " ")}
 
     except Exception as e:
-        return {"error": f"Произошла ошибка при получении данных: {str(e)}"}
+        return {"error": f"Произошла непредвиденная ошибка: {str(e)}"}
+
 
 def summarize_transcript(transcript: str) -> dict:
     """
     Принимает полный текст транскрипта, обрабатывает его по частям и создает
     структурированное саммари на русском языке.
-
-    Args:
-        transcript: Текст транскрипта.
-
-    Returns:
-        Словарь с ключом 'summary' (готовое саммари в формате Markdown).
-        В случае ошибки возвращает словарь с ключом 'error'.
     """
-    load_dotenv()
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return {"error": "Ключ GOOGLE_API_KEY не найден. Убедитесь, что он задан в .env файле."}
-
-    genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-pro-latest')
 
     try:
@@ -101,13 +100,6 @@ def summarize_transcript(transcript: str) -> dict:
 def save_summary_to_file(title: str, summary: str) -> dict:
     """
     Сохраняет готовое саммари в .md файл.
-
-    Args:
-        title: Название видео, которое будет использовано для имени файла.
-        summary: Текст саммари.
-
-    Returns:
-        Словарь с сообщением об успехе или ошибке.
     """
     try:
         sane_title = re.sub(r'[^\w\s-]', '', title).strip()
@@ -127,7 +119,7 @@ def save_summary_to_file(title: str, summary: str) -> dict:
         return {"error": f"Не удалось сохранить файл: {str(e)}"}
 
 root_agent = Agent(
-    model='models/gemini-pro-latest',
+    model='gemini-pro',
     name='youtube_summarizer',
     description="Создает структурированное саммари YouTube-видео и сохраняет его в .md файл.",
     instruction="""Ты — продвинутый ассистент для анализа видео.
