@@ -30,7 +30,7 @@
 
 3.  **Установите зависимости:**
     ```bash
-    pip install google-adk
+    pip install -r requirements.txt
     ```
 
 4.  **Настройте ключ API:**
