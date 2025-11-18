@@ -6,6 +6,16 @@ import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+# Загружаем переменные окружения из .env файла в самом начале
+load_dotenv()
+
+# Конфигурируем API-ключ глобально для всей библиотеки
+api_key = os.getenv("GEMINI_API_KEY")
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    print("ВНИМАНИЕ: Ключ GEMINI_API_KEY не найден в .env файле или переменных окружения.")
+
 def get_youtube_transcript(url: str) -> dict:
     """
     Принимает URL YouTube-видео, извлекает его название и полный текст транскрипта.
@@ -60,12 +70,10 @@ def summarize_transcript(transcript: str) -> dict:
         Словарь с ключом 'summary' (готовое саммари в формате Markdown).
         В случае ошибки возвращает словарь с ключом 'error'.
     """
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return {"error": "Ключ GEMINI_API_KEY не найден. Убедитесь, что он задан в .env файле."}
+    # Теперь, когда ключ API настроен глобально, эта проверка не нужна
+    # if not genai.API_KEY:
+    #     return {"error": "Ключ GEMINI_API_KEY не найден. Убедитесь, что он задан в .env файле."}
 
-    genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-pro-latest')
 
     try:
